@@ -119,13 +119,15 @@
         let score = 0;
         let lives = 3;
         let frameCount = 0;
+        let boostEndTime = 0;
 
         // Couleurs Néon
         const COLORS = {
             PLAYER: '#00ffff', // Cyan
             ENEMY_1: '#ff00ff', // Magenta
             ENEMY_2: '#ffff00', // Jaune fluo
-            BULLET: '#ffffff'  // Blanc pur
+            BULLET: '#ffffff', // Blanc pur
+            POWERUP: '#ffff00' // Jaune
         };
 
         // Gestion des touches
@@ -148,12 +150,20 @@
                 this.y = canvas.height - 40;
                 this.speed = 6;
                 this.lastShotTime = 0;
-                this.shootDelay = 250; // ms entre les tirs
+                this.baseShootDelay = 250; // ms entre les tirs
+                this.shootDelay = 250;
             }
 
             update() {
                 if (keys.ArrowRight && this.x + this.width < canvas.width) this.x += this.speed;
                 if (keys.ArrowLeft && this.x > 0) this.x -= this.speed;
+
+                // Gestion du Boost
+                if (Date.now() < boostEndTime) {
+                    this.shootDelay = this.baseShootDelay / 2;
+                } else {
+                    this.shootDelay = this.baseShootDelay;
+                }
 
                 if (keys.Space) {
                     const now = Date.now();
@@ -166,6 +176,33 @@
 
             draw() {
                 drawNeonRect(this.x, this.y, this.width, this.height, COLORS.PLAYER, 20);
+            }
+        }
+
+        // --- Classe : PowerUp ---
+        class PowerUp {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 20;
+                this.height = 20;
+                this.color = COLORS.POWERUP;
+                this.velocityY = 3;
+                this.markedForDeletion = false;
+            }
+
+            update() {
+                this.y += this.velocityY;
+                if (this.y > canvas.height) this.markedForDeletion = true;
+            }
+
+            draw() {
+                drawNeonRect(this.x, this.y, this.width, this.height, this.color, 15);
+                ctx.fillStyle = 'black';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('P', this.x + this.width / 2, this.y + this.height / 2);
             }
         }
 
@@ -299,6 +336,7 @@
         let bullets = [];
         let enemies = [];
         let particles = [];
+        let powerUps = [];
         let enemyDirectionX = 1;
         let enemySpeed = 1.5;
 
@@ -307,11 +345,13 @@
             bullets = [];
             enemies = [];
             particles = [];
+            powerUps = [];
             score = 0;
             lives = 3;
             enemySpeed = 1.5;
             gameRunning = true;
             gameOverOverlay.style.display = 'none';
+            boostEndTime = 0;
             updateUI();
             createEnemies();
             animate();
@@ -386,8 +426,31 @@
             // Filtrer les particules "mortes" (alpha <= 0)
             particles = particles.filter(p => !p.markedForDeletion);
 
-
+            // --- Gestion des PowerUps ---
             if (gameRunning) {
+                powerUps.forEach(p => {
+                    p.update();
+                    p.draw();
+                    if (checkCollision(p, player)) {
+                        p.markedForDeletion = true;
+                        // Activate Boost (5 seconds)
+                        boostEndTime = Date.now() + 5000;
+                    }
+                });
+                powerUps = powerUps.filter(p => !p.markedForDeletion);
+
+                // Affichage du texte BOOST
+                if (Date.now() < boostEndTime) {
+                    ctx.save();
+                    ctx.fillStyle = COLORS.POWERUP;
+                    ctx.font = 'bold 24px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = COLORS.POWERUP;
+                    ctx.fillText('BOOST!', canvas.width / 2, 30);
+                    ctx.restore();
+                }
+
                 // --- Gestion des Projectiles ---
                 bullets.forEach(bullet => {
                     bullet.update();
@@ -402,6 +465,12 @@
                                 // *** DÉCLENCHEMENT DE L'EXPLOSION ***
                                 createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color);
                                 score += 20;
+
+                                // Drop PowerUp (15% chance)
+                                if (Math.random() < 0.15) {
+                                    powerUps.push(new PowerUp(enemy.x, enemy.y));
+                                }
+
                                 updateUI();
                             }
                         });
