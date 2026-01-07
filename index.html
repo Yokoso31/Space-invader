@@ -3,14 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Space Invaders - HTML5</title>
+    <title>Neon Space Invaders</title>
     <style>
-        /* STYLE CSS : Mise en page simple et rétro */
+        /* --- STYLE CSS : Esthétique Néon --- */
+        :root {
+            --bg-color: #050505;
+            --neon-cyan: #00ffff;
+            --neon-magenta: #ff00ff;
+            --neon-yellow: #ffff00;
+            --text-glow: 0 0 5px currentColor, 0 0 10px currentColor;
+        }
+
         body {
             margin: 0;
-            background-color: #111;
+            background-color: var(--bg-color);
             color: white;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -19,284 +27,454 @@
             overflow: hidden;
         }
 
-        canvas {
-            border: 4px solid #333;
-            background-color: #000;
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
-        }
-
-        .ui {
-            margin-bottom: 10px;
-            font-size: 20px;
+        #ui-container {
             width: 800px;
             display: flex;
             justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .neon-text-cyan { color: var(--neon-cyan); text-shadow: var(--text-glow); }
+        .neon-text-magenta { color: var(--neon-magenta); text-shadow: var(--text-glow); }
+
+        canvas {
+            background-color: #0a0a0a;
+            /* Effet de bordure lumineuse subtile */
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2), 0 0 40px rgba(255, 0, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        /* Superposition Game Over */
+        #game-over-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none; /* Caché par défaut */
+            z-index: 10;
+        }
+
+        #game-over-overlay h1 {
+            font-size: 4em;
+            margin: 0;
+            color: var(--neon-magenta);
+            text-shadow: 0 0 10px var(--neon-magenta), 0 0 20px var(--neon-magenta), 0 0 30px var(--neon-cyan);
+            animation: pulse 1.5s infinite alternate;
+        }
+
+        #replay-btn {
+            margin-top: 20px;
+            padding: 10px 30px;
+            font-size: 1.2em;
+            background: transparent;
+            color: var(--neon-cyan);
+            border: 2px solid var(--neon-cyan);
+            box-shadow: 0 0 10px var(--neon-cyan);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        #replay-btn:hover {
+            background: var(--neon-cyan);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan);
+        }
+
+        @keyframes pulse {
+            from { opacity: 0.8; transform: scale(1); }
+            to { opacity: 1; transform: scale(1.05); }
         }
     </style>
 </head>
 <body>
 
-    <div class="ui">
-        <div id="score">Score: 0</div>
-        <div id="level">Niveau: 1</div>
-        <div id="lives">Vies: 3</div>
+    <div id="ui-container">
+        <div class="neon-text-cyan">Score: <span id="score">0</span></div>
+        <div class="neon-text-magenta">Vies: <span id="lives">3</span></div>
     </div>
 
-    <canvas id="gameCanvas"></canvas>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div id="game-over-overlay">
+        <h1>GAME OVER</h1>
+        <button id="replay-btn">REJOUER LA MISSION</button>
+    </div>
+
 
     <script>
-        /**
-         * CONFIGURATION ET VARIABLES GLOBALES
-         */
+        // ==========================================
+        // CONFIGURATION ET VARIABLES GLOBALES
+        // ==========================================
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const scoreElement = document.getElementById('score');
-        const livesElement = document.getElementById('lives');
-        const levelElement = document.getElementById('level');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const gameOverOverlay = document.getElementById('game-over-overlay');
+        const replayBtn = document.getElementById('replay-btn');
 
-        canvas.width = 800;
-        canvas.height = 600;
-
+        let gameRunning = true;
         let score = 0;
         let lives = 3;
-        let level = 1;
-        let gameOver = false;
-        let keys = {};
+        let frameCount = 0;
 
-        /**
-         * CLASSES DES ENTITÉS
-         */
+        // Couleurs Néon
+        const COLORS = {
+            PLAYER: '#00ffff', // Cyan
+            ENEMY_1: '#ff00ff', // Magenta
+            ENEMY_2: '#ffff00', // Jaune fluo
+            BULLET: '#ffffff'  // Blanc pur
+        };
 
-        // Le Vaisseau du Joueur
+        // Gestion des touches
+        const keys = { ArrowRight: false, ArrowLeft: false, Space: false };
+        document.addEventListener('keydown', (e) => { if(e.code === 'Space' || e.code.startsWith('Arrow')) keys[e.code] = true; });
+        document.addEventListener('keyup', (e) => { if(e.code === 'Space' || e.code.startsWith('Arrow')) keys[e.code] = false; });
+        replayBtn.addEventListener('click', resetGame);
+
+
+        // ==========================================
+        // CLASSES DU JEU
+        // ==========================================
+
+        // --- Classe : Vaisseau du Joueur ---
         class Player {
             constructor() {
                 this.width = 40;
                 this.height = 20;
                 this.x = canvas.width / 2 - this.width / 2;
                 this.y = canvas.height - 40;
-                this.speed = 5;
-                this.color = '#00FF00';
-            }
-
-            draw() {
-                ctx.fillStyle = this.color;
-                // Forme de tank simple
-                ctx.fillRect(this.x, this.y, this.width, this.height);
-                ctx.fillRect(this.x + this.width / 2 - 5, this.y - 10, 10, 10);
+                this.speed = 6;
+                this.lastShotTime = 0;
+                this.shootDelay = 250; // ms entre les tirs
             }
 
             update() {
-                if (keys['ArrowLeft'] && this.x > 0) this.x -= this.speed;
-                if (keys['ArrowRight'] && this.x < canvas.width - this.width) this.x += this.speed;
+                if (keys.ArrowRight && this.x + this.width < canvas.width) this.x += this.speed;
+                if (keys.ArrowLeft && this.x > 0) this.x -= this.speed;
+
+                if (keys.Space) {
+                    const now = Date.now();
+                    if (now - this.lastShotTime > this.shootDelay) {
+                        bullets.push(new Bullet(this.x + this.width / 2, this.y, -8, COLORS.PLAYER, true));
+                        this.lastShotTime = now;
+                    }
+                }
+            }
+
+            draw() {
+                drawNeonRect(this.x, this.y, this.width, this.height, COLORS.PLAYER, 20);
             }
         }
 
-        // Les Projectiles (Joueur et Ennemis)
+        // --- Classe : Projectile ---
         class Bullet {
-            constructor(x, y, speed, color) {
+            constructor(x, y, velocityY, color, isPlayerBullet) {
                 this.x = x;
                 this.y = y;
-                this.width = 4;
+                this.width = 3;
                 this.height = 10;
-                this.speed = speed;
+                this.velocityY = velocityY;
                 this.color = color;
-                this.active = true;
-            }
-
-            draw() {
-                ctx.fillStyle = this.color;
-                ctx.fillRect(this.x, this.y, this.width, this.height);
+                this.isPlayerBullet = isPlayerBullet;
+                this.markedForDeletion = false;
             }
 
             update() {
-                this.y += this.speed;
-                // Désactiver si hors de l'écran
-                if (this.y < 0 || this.y > canvas.height) this.active = false;
-            }
-        }
-
-        // Les Ennemis (Invaders)
-        class Enemy {
-            constructor(x, y) {
-                this.x = x;
-                this.y = y;
-                this.width = 30;
-                this.height = 20;
-                this.color = '#FF0000';
+                this.y += this.velocityY;
+                if (this.y < 0 || this.y > canvas.height) this.markedForDeletion = true;
             }
 
             draw() {
+                drawNeonRect(this.x - this.width/2, this.y, this.width, this.height, this.color, 10);
+            }
+        }
+
+        // --- Classe : Ennemi ---
+        class Enemy {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.width = 25;
+                this.height = 25;
+                this.color = color;
+                this.markedForDeletion = false;
+
+                // *** EXPLICATION PEDAGOGIQUE : ROTATION ***
+                // Pour faire tourner un objet, nous avons besoin d'un angle qui change avec le temps.
+                this.angle = 0;
+                this.rotationSpeed = Math.random() * 0.04 + 0.02; // Vitesse de rotation aléatoire
+            }
+
+            update(velocityX, velocityY) {
+                this.x += velocityX;
+                this.y += velocityY;
+                // On incrémente l'angle à chaque frame pour animer la rotation.
+                this.angle += this.rotationSpeed;
+            }
+
+            draw() {
+                // *** EXPLICATION PEDAGOGIQUE : DESSINER LA ROTATION ***
+                // Dessiner un rectangle tourné n'est pas aussi simple que de changer ses coordonnées.
+                // Il faut manipuler le contexte (le "pinceau") du canvas.
+
+                ctx.save(); // 1. Sauvegarde l'état actuel du contexte (sans rotation).
+
+                // 2. On déplace le point d'origine (0,0) du contexte au CENTRE de l'ennemi.
+                // C'est l'étape cruciale : on tourne autour du centre, pas du coin supérieur gauche.
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+
+                // 3. On fait pivoter le contexte selon l'angle actuel de l'ennemi.
+                ctx.rotate(this.angle);
+
+                // 4. On dessine le rectangle. Comme notre origine (0,0) est maintenant au centre
+                // de l'ennemi, on doit dessiner le rectangle de -width/2 à -height/2 pour qu'il soit centré.
+                drawNeonRect(-this.width / 2, -this.height / 2, this.width, this.height, this.color, 15);
+
+                ctx.restore(); // 5. Restaure l'état sauvegardé en 1. Le prochain dessin ne sera pas affecté par cette rotation.
+            }
+        }
+
+
+        // --- Classe : Particule (pour les explosions) ---
+        // *** EXPLICATION PEDAGOGIQUE : SYSTEME DE PARTICULES ***
+        // Une explosion n'est qu'un ensemble de petits points (particules) qui partent
+        // d'un point central, se déplacent, et disparaissent progressivement (alpha).
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = Math.random() * 2 + 1; // Taille aléatoire
+                this.color = color;
+                // Vélocité aléatoire dans toutes les directions
+                this.vx = (Math.random() - 0.5) * 6;
+                this.vy = (Math.random() - 0.5) * 6;
+                this.alpha = 1; // Opacité initiale (complètement visible)
+                this.friction = 0.96; // Pour ralentir la particule avec le temps
+                this.markedForDeletion = false;
+            }
+
+            update() {
+                // Mouvement
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+                // Disparition progressive
+                this.alpha -= 0.02;
+                if (this.alpha <= 0) this.markedForDeletion = true;
+            }
+
+            draw() {
+                // Dessin d'un cercle néon avec transparence (alpha)
+                ctx.save();
+                ctx.globalAlpha = this.alpha; // Applique la transparence
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 ctx.fillStyle = this.color;
-                ctx.fillRect(this.x, this.y, this.width, this.height);
-                // "Yeux" de l'ennemi
-                ctx.fillStyle = 'black';
-                ctx.fillRect(this.x + 5, this.y + 5, 5, 5);
-                ctx.fillRect(this.x + 20, this.y + 5, 5, 5);
+                ctx.shadowBlur = 10; // Lueur
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.restore();
             }
         }
 
-        /**
-         * GESTION DU JEU
-         */
+        // ==========================================
+        // FONCTIONS UTILITAIRES ET LOGIQUE DE JEU
+        // ==========================================
 
-        let player = new Player();
-        let playerBullets = [];
-        let enemyBullets = [];
+        // Fonction pour dessiner un rectangle avec effet Néon
+        function drawNeonRect(x, y, w, h, color, blurAmount) {
+            ctx.shadowBlur = blurAmount;
+            ctx.shadowColor = color;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+            // Réinitialiser le shadow pour ne pas affecter les autres dessins non-néon (si besoin)
+            ctx.shadowBlur = 0;
+        }
+
+        let player;
+        let bullets = [];
         let enemies = [];
-        let enemyDirection = 1;
-        let enemySpeed = 1;
+        let particles = [];
+        let enemyDirectionX = 1;
+        let enemySpeed = 1.5;
 
-        // Création de la grille d'ennemis
-        function createEnemies() {
+        function init() {
+            player = new Player();
+            bullets = [];
             enemies = [];
-            const rows = 4;
-            const cols = 10;
-            const padding = 20;
-            const offsetX = 50;
-            const offsetY = 50;
-
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    enemies.push(new Enemy(
-                        c * (30 + padding) + offsetX,
-                        r * (20 + padding) + offsetY
-                    ));
-                }
-            }
-        }
-
-        // Détection de collision simple (Rectangle contre Rectangle)
-        function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
-            return x2 < x1 + w1 && x2 + w2 > x1 && y2 < y1 + h1 && y2 + h2 > y1;
-        }
-
-        // Initialisation des contrôles
-        window.addEventListener('keydown', e => {
-            keys[e.code] = true;
-            if (e.code === 'Space' && !gameOver) {
-                // Un seul tir à la fois autorisé pour le challenge
-                if (playerBullets.length < 3) {
-                    playerBullets.push(new Bullet(player.x + player.width / 2 - 2, player.y, -7, '#00FF00'));
-                }
-            }
-            if (e.code === 'Enter' && gameOver) restartGame();
-        });
-        window.addEventListener('keyup', e => keys[e.code] = false);
-
-        function restartGame() {
+            particles = [];
             score = 0;
             lives = 3;
-            level = 1;
-            enemySpeed = 1;
-            gameOver = false;
-            player = new Player();
-            playerBullets = [];
-            enemyBullets = [];
+            enemySpeed = 1.5;
+            gameRunning = true;
+            gameOverOverlay.style.display = 'none';
             updateUI();
             createEnemies();
-            gameLoop();
+            animate();
+        }
+
+        function createEnemies() {
+            enemies = [];
+            for (let row = 0; row < 5; row++) {
+                for (let col = 0; col < 10; col++) {
+                    // Alterne les couleurs néon selon la ligne
+                    let color = (row % 2 === 0) ? COLORS.ENEMY_1 : COLORS.ENEMY_2;
+                    let x = col * 50 + 50;
+                    let y = row * 40 + 40;
+                    enemies.push(new Enemy(x, y, color));
+                }
+            }
+            enemyDirectionX = 1;
+        }
+
+        // Fonction pour générer une explosion à un endroit donné
+        function createExplosion(x, y, color) {
+            // On crée 15 particules pour une explosion
+            for (let i = 0; i < 15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.width &&
+                rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height &&
+                rect1.y + rect1.height > rect2.y
+            );
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            gameOverOverlay.style.display = 'block';
+            createExplosion(player.x + player.width/2, player.y + player.height/2, COLORS.PLAYER);
+        }
+
+        function resetGame() {
+            init();
         }
 
         function updateUI() {
-            scoreElement.innerText = `Score: ${score}`;
-            livesElement.innerText = `Vies: ${lives}`;
-            levelElement.innerText = `Niveau: ${level}`;
+            scoreEl.innerText = score;
+            livesEl.innerText = lives;
         }
 
-        /**
-         * BOUCLE DE JEU PRINCIPALE
-         */
-        function gameLoop() {
-            if (gameOver) {
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = 'white';
-                ctx.font = '40px Courier New';
-                ctx.fillText('GAME OVER', canvas.width / 2 - 100, canvas.height / 2);
-                ctx.font = '20px Courier New';
-                ctx.fillText('Appuyez sur Entrée pour rejouer', canvas.width / 2 - 160, canvas.height / 2 + 40);
-                return;
+        // ==========================================
+        // BOUCLE PRINCIPALE DU JEU
+        // ==========================================
+        function animate() {
+            if (!gameRunning && particles.length === 0) return; // Stop si game over ET plus de particules
+
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.4)'; // Trace légère pour effet de traînée
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (gameRunning) {
+                frameCount++;
+                player.update();
+                player.draw();
             }
 
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // 1. Mise à jour du joueur
-            player.update();
-            player.draw();
-
-            // 2. Gestion des projectiles joueur
-            playerBullets.forEach((bullet, bIndex) => {
-                bullet.update();
-                bullet.draw();
-                if (!bullet.active) playerBullets.splice(bIndex, 1);
+            // --- Gestion des Particules (Explosions) ---
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
             });
+            // Filtrer les particules "mortes" (alpha <= 0)
+            particles = particles.filter(p => !p.markedForDeletion);
 
-            // 3. Gestion des ennemis
-            let changeDirection = false;
-            enemies.forEach(enemy => {
-                enemy.x += enemyDirection * enemySpeed;
-                if (enemy.x <= 0 || enemy.x + enemy.width >= canvas.width) {
-                    changeDirection = true;
-                }
-                enemy.draw();
 
-                // Collision Projectile Joueur -> Ennemi
-                playerBullets.forEach((bullet, bIndex) => {
-                    if (rectIntersect(bullet.x, bullet.y, bullet.width, bullet.height, enemy.x, enemy.y, enemy.width, enemy.height)) {
-                        enemies.splice(enemies.indexOf(enemy), 1);
-                        playerBullets.splice(bIndex, 1);
-                        score += 10;
+            if (gameRunning) {
+                // --- Gestion des Projectiles ---
+                bullets.forEach(bullet => {
+                    bullet.update();
+                    bullet.draw();
+
+                    // Collisions Projectiles Joueur -> Ennemis
+                    if (bullet.isPlayerBullet) {
+                        enemies.forEach(enemy => {
+                            if (checkCollision(bullet, enemy)) {
+                                bullet.markedForDeletion = true;
+                                enemy.markedForDeletion = true;
+                                // *** DÉCLENCHEMENT DE L'EXPLOSION ***
+                                createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color);
+                                score += 20;
+                                updateUI();
+                            }
+                        });
+                    }
+                    // Collisions Projectiles Ennemis -> Joueur
+                    else {
+                       if (checkCollision(bullet, player)) {
+                           bullet.markedForDeletion = true;
+                           lives--;
+                           updateUI();
+                           createExplosion(player.x + player.width/2, player.y, COLORS.PLAYER);
+                           if(lives <= 0) gameOver();
+                       }
+                    }
+                });
+                bullets = bullets.filter(b => !b.markedForDeletion);
+
+
+                // --- Gestion des Ennemis ---
+                let moveDown = false;
+                let mostRight = 0;
+                let mostLeft = canvas.width;
+
+                enemies.forEach(enemy => {
+                    // Tir des ennemis (aléatoire)
+                    if (frameCount % 60 === 0 && Math.random() < 0.03) {
+                        bullets.push(new Bullet(enemy.x + enemy.width/2, enemy.y + enemy.height, 4, enemy.color, false));
+                    }
+
+                    // Vérifier les bords pour le mouvement de groupe
+                    mostRight = Math.max(mostRight, enemy.x + enemy.width);
+                    mostLeft = Math.min(mostLeft, enemy.x);
+
+                    // Collision Ennemi -> Joueur (Game Over direct)
+                    if(checkCollision(enemy, player)) {
+                        lives = 0;
                         updateUI();
+                        gameOver();
+                    }
+                    // Si un ennemi atteint le bas de l'écran
+                    if(enemy.y + enemy.height > canvas.height - 50) {
+                        lives = 0;
+                        updateUI();
+                        gameOver();
                     }
                 });
 
-                // Défaite si un ennemi touche le joueur
-                if (rectIntersect(enemy.x, enemy.y, enemy.width, enemy.height, player.x, player.y, player.width, player.height)) {
-                    gameOver = true;
-                }
-            });
-
-            if (changeDirection) {
-                enemyDirection *= -1;
-                enemies.forEach(e => e.y += 20);
-            }
-
-            // 4. Tir des ennemis (Difficulté augmente avec le niveau)
-            if (Math.random() < 0.01 + (level * 0.005) && enemies.length > 0) {
-                const shooter = enemies[Math.floor(Math.random() * enemies.length)];
-                enemyBullets.push(new Bullet(shooter.x + shooter.width/2, shooter.y + shooter.height, 4 + level, '#FF0000'));
-            }
-
-            // 5. Gestion des projectiles ennemis
-            enemyBullets.forEach((bullet, bIndex) => {
-                bullet.update();
-                bullet.draw();
-
-                // Collision Projectile Ennemi -> Joueur
-                if (rectIntersect(bullet.x, bullet.y, bullet.width, bullet.height, player.x, player.y, player.width, player.height)) {
-                    enemyBullets.splice(bIndex, 1);
-                    lives--;
-                    updateUI();
-                    if (lives <= 0) gameOver = true;
+                if (mostRight > canvas.width - 20 || mostLeft < 20) {
+                    enemyDirectionX *= -1;
+                    moveDown = true;
+                    // Légère accélération à chaque descente
+                    enemySpeed = Math.min(enemySpeed + 0.2, 6);
                 }
 
-                if (!bullet.active) enemyBullets.splice(bIndex, 1);
-            });
+                enemies.forEach(enemy => {
+                    enemy.update(enemyDirectionX * enemySpeed, moveDown ? 20 : 0);
+                    enemy.draw();
+                });
+                enemies = enemies.filter(e => !e.markedForDeletion);
 
-            // 6. Passage au niveau suivant
-            if (enemies.length === 0) {
-                level++;
-                enemySpeed += 0.5;
-                updateUI();
-                createEnemies();
+                // Gagner : plus d'ennemis
+                if (enemies.length === 0 && gameRunning) {
+                    // Réapparition simple pour la démo, on pourrait faire des niveaux
+                    enemySpeed += 0.5;
+                    createEnemies();
+                }
             }
 
-            requestAnimationFrame(gameLoop);
+            requestAnimationFrame(animate);
         }
 
-        // Lancement initial
-        createEnemies();
-        gameLoop();
+        // Lancement
+        init();
 
     </script>
 </body>
