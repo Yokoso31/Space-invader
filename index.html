@@ -120,6 +120,7 @@
         let lives = 3;
         let frameCount = 0;
         let boostEndTime = 0;
+        let doubleFireEndTime = 0;
 
         // Couleurs Néon
         const COLORS = {
@@ -127,7 +128,8 @@
             ENEMY_1: '#ff00ff', // Magenta
             ENEMY_2: '#ffff00', // Jaune fluo
             BULLET: '#ffffff', // Blanc pur
-            POWERUP: '#ffff00' // Jaune
+            POWERUP_SPEED: '#ffff00', // Jaune (Vitesse)
+            POWERUP_DOUBLE: '#0000ff' // Bleu (Double Tir)
         };
 
         // Gestion des touches
@@ -152,23 +154,33 @@
                 this.lastShotTime = 0;
                 this.baseShootDelay = 250; // ms entre les tirs
                 this.shootDelay = 250;
+                this.isDoubleFire = false;
             }
 
             update() {
                 if (keys.ArrowRight && this.x + this.width < canvas.width) this.x += this.speed;
                 if (keys.ArrowLeft && this.x > 0) this.x -= this.speed;
 
-                // Gestion du Boost
+                // Gestion du Boost Vitesse
                 if (Date.now() < boostEndTime) {
                     this.shootDelay = this.baseShootDelay / 2;
                 } else {
                     this.shootDelay = this.baseShootDelay;
                 }
 
+                // Gestion Double Tir
+                this.isDoubleFire = (Date.now() < doubleFireEndTime);
+
                 if (keys.Space) {
                     const now = Date.now();
                     if (now - this.lastShotTime > this.shootDelay) {
-                        bullets.push(new Bullet(this.x + this.width / 2, this.y, -8, COLORS.PLAYER, true));
+                        if (this.isDoubleFire) {
+                            // Double tir : décalage de -10 et +10 par rapport au centre
+                            bullets.push(new Bullet(this.x + this.width / 2 - 10, this.y, -8, COLORS.PLAYER, true));
+                            bullets.push(new Bullet(this.x + this.width / 2 + 10, this.y, -8, COLORS.PLAYER, true));
+                        } else {
+                            bullets.push(new Bullet(this.x + this.width / 2, this.y, -8, COLORS.PLAYER, true));
+                        }
                         this.lastShotTime = now;
                     }
                 }
@@ -181,14 +193,22 @@
 
         // --- Classe : PowerUp ---
         class PowerUp {
-            constructor(x, y) {
+            constructor(x, y, type) {
                 this.x = x;
                 this.y = y;
                 this.width = 20;
                 this.height = 20;
-                this.color = COLORS.POWERUP;
+                this.type = type; // 'SPEED' ou 'DOUBLE'
                 this.velocityY = 3;
                 this.markedForDeletion = false;
+
+                if (this.type === 'DOUBLE') {
+                    this.color = COLORS.POWERUP_DOUBLE;
+                    this.symbol = '2';
+                } else {
+                    this.color = COLORS.POWERUP_SPEED;
+                    this.symbol = 'P';
+                }
             }
 
             update() {
@@ -198,11 +218,12 @@
 
             draw() {
                 drawNeonRect(this.x, this.y, this.width, this.height, this.color, 15);
-                ctx.fillStyle = 'black';
+                // Si c'est bleu (Double), texte blanc; si jaune (Speed), texte noir
+                ctx.fillStyle = (this.type === 'DOUBLE') ? 'white' : 'black';
                 ctx.font = 'bold 16px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText('P', this.x + this.width / 2, this.y + this.height / 2);
+                ctx.fillText(this.symbol, this.x + this.width / 2, this.y + this.height / 2);
             }
         }
 
@@ -352,6 +373,7 @@
             gameRunning = true;
             gameOverOverlay.style.display = 'none';
             boostEndTime = 0;
+            doubleFireEndTime = 0;
             updateUI();
             createEnemies();
             animate();
@@ -433,22 +455,55 @@
                     p.draw();
                     if (checkCollision(p, player)) {
                         p.markedForDeletion = true;
-                        // Activate Boost (5 seconds)
-                        boostEndTime = Date.now() + 5000;
+                        if (p.type === 'DOUBLE') {
+                            // Active Double Tir (10 secondes)
+                            doubleFireEndTime = Date.now() + 10000;
+                        } else {
+                            // Active Boost Vitesse (5 secondes)
+                            boostEndTime = Date.now() + 5000;
+                        }
                     }
                 });
                 powerUps = powerUps.filter(p => !p.markedForDeletion);
 
-                // Affichage du texte BOOST
+                // Affichage du texte BOOST (Speed)
                 if (Date.now() < boostEndTime) {
                     ctx.save();
-                    ctx.fillStyle = COLORS.POWERUP;
+                    ctx.fillStyle = COLORS.POWERUP_SPEED;
                     ctx.font = 'bold 24px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.shadowBlur = 10;
-                    ctx.shadowColor = COLORS.POWERUP;
+                    ctx.shadowColor = COLORS.POWERUP_SPEED;
                     ctx.fillText('BOOST!', canvas.width / 2, 30);
                     ctx.restore();
+                }
+
+                // Affichage barre progression Double Tir
+                if (Date.now() < doubleFireEndTime) {
+                    const timeLeft = doubleFireEndTime - Date.now();
+                    const maxTime = 10000;
+                    const width = 200;
+                    const height = 10;
+                    const x = 20; // Position gauche
+                    const y = 60; // Sous le score (environ)
+
+                    // Fond de barre
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(x, y, width, height);
+
+                    // Barre de progression
+                    const progressWidth = (timeLeft / maxTime) * width;
+                    ctx.fillStyle = COLORS.POWERUP_DOUBLE;
+                    ctx.shadowColor = COLORS.POWERUP_DOUBLE;
+                    ctx.shadowBlur = 10;
+                    ctx.fillRect(x, y, progressWidth, height);
+                    ctx.shadowBlur = 0;
+
+                    // Texte indicateur
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('DOUBLE TIR', x, y - 5);
                 }
 
                 // --- Gestion des Projectiles ---
@@ -466,9 +521,14 @@
                                 createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color);
                                 score += 20;
 
-                                // Drop PowerUp (15% chance)
-                                if (Math.random() < 0.15) {
-                                    powerUps.push(new PowerUp(enemy.x, enemy.y));
+                                // Drop PowerUp
+                                const rand = Math.random();
+                                if (rand < 0.10) {
+                                    // 10% chance pour Double Tir
+                                    powerUps.push(new PowerUp(enemy.x, enemy.y, 'DOUBLE'));
+                                } else if (rand < 0.25) {
+                                    // 15% chance pour Vitesse (cumulatif : 0.10 à 0.25)
+                                    powerUps.push(new PowerUp(enemy.x, enemy.y, 'SPEED'));
                                 }
 
                                 updateUI();
