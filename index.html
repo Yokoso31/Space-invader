@@ -118,9 +118,12 @@
         let gameRunning = true;
         let score = 0;
         let lives = 3;
+        let level = 1;
         let frameCount = 0;
         let boostEndTime = 0;
         let doubleFireEndTime = 0;
+        let boss = null; // Variable pour le Boss
+        let waveLoading = false; // Flag pour éviter le spawn prématuré du boss
 
         // Couleurs Néon
         const COLORS = {
@@ -129,7 +132,8 @@
             ENEMY_2: '#ffff00', // Jaune fluo
             BULLET: '#ffffff', // Blanc pur
             POWERUP_SPEED: '#ffff00', // Jaune (Vitesse)
-            POWERUP_DOUBLE: '#0000ff' // Bleu (Double Tir)
+            POWERUP_DOUBLE: '#0000ff', // Bleu (Double Tir)
+            BOSS: ['#ff0000', '#00ff00', '#ff8800'] // Palette Boss
         };
 
         // Gestion des touches
@@ -229,12 +233,13 @@
 
         // --- Classe : Projectile ---
         class Bullet {
-            constructor(x, y, velocityY, color, isPlayerBullet) {
+            constructor(x, y, velocityY, color, isPlayerBullet, velocityX = 0) {
                 this.x = x;
                 this.y = y;
-                this.width = 3;
+                this.width = 4;
                 this.height = 10;
                 this.velocityY = velocityY;
+                this.velocityX = velocityX;
                 this.color = color;
                 this.isPlayerBullet = isPlayerBullet;
                 this.markedForDeletion = false;
@@ -242,7 +247,8 @@
 
             update() {
                 this.y += this.velocityY;
-                if (this.y < 0 || this.y > canvas.height) this.markedForDeletion = true;
+                this.x += this.velocityX;
+                if (this.y < 0 || this.y > canvas.height || this.x < 0 || this.x > canvas.width) this.markedForDeletion = true;
             }
 
             draw() {
@@ -292,6 +298,132 @@
                 drawNeonRect(-this.width / 2, -this.height / 2, this.width, this.height, this.color, 15);
 
                 ctx.restore(); // 5. Restaure l'état sauvegardé en 1. Le prochain dessin ne sera pas affecté par cette rotation.
+            }
+        }
+
+        // --- Classe : BOSS ---
+        class Boss {
+            constructor(level) {
+                this.width = 100;
+                this.height = 80;
+                this.x = canvas.width / 2 - this.width / 2;
+                this.y = -100; // Commence hors écran
+                this.targetY = 50;
+                this.level = level;
+                this.maxHp = 50 + (level * 30);
+                this.hp = this.maxHp;
+
+                // Apparence aléatoire basée sur le niveau
+                this.color = COLORS.BOSS[(level - 1) % COLORS.BOSS.length];
+                this.type = (level - 1) % 3; // 0: Tank, 1: Speeder, 2: Spinner
+
+                this.dx = 3 + level * 0.5;
+                this.angle = 0;
+            }
+
+            update() {
+                // Entrée en scène
+                if (this.y < this.targetY) {
+                    this.y += 2;
+                    return;
+                }
+
+                // Mouvement
+                if (this.type === 0) { // Tank : Lent, gauche droite
+                    this.x += Math.sin(frameCount * 0.02) * 2;
+                } else if (this.type === 1) { // Speeder : Rapide
+                    this.x += Math.cos(frameCount * 0.05) * 5;
+                } else { // Spinner : Mouvement en huit
+                    this.x += Math.cos(frameCount * 0.03) * 4;
+                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
+                }
+
+                // Garder dans l'écran
+                if (this.x < 0) this.x = 0;
+                if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+
+                // Tirs Spéciaux
+                if (frameCount % (60 - Math.min(this.level * 2, 40)) === 0) {
+                    this.shoot();
+                }
+            }
+
+            shoot() {
+                const centerX = this.x + this.width / 2;
+                const bottomY = this.y + this.height;
+
+                if (this.type === 0) {
+                    // Tir en éventail (3 balles)
+                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, 0));
+                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, -2));
+                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, 2));
+                } else if (this.type === 1) {
+                    // Tir rapide ciblé (Vise un peu le joueur)
+                    const angle = Math.atan2(player.y - bottomY, player.x - centerX);
+                    const vx = Math.cos(angle) * 7;
+                    const vy = Math.sin(angle) * 7;
+                    bullets.push(new Bullet(centerX, bottomY, vy, this.color, false, vx));
+                } else {
+                    // Tir circulaire (Burst)
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (Math.PI * 2 / 8) * i + frameCount * 0.1;
+                        const vx = Math.cos(angle) * 5;
+                        const vy = Math.sin(angle) * 5;
+                        bullets.push(new Bullet(centerX + vx*5, bottomY + vy*5, vy, this.color, false, vx));
+                    }
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+
+                // Rotation pour le type Spinner
+                if (this.type === 2) {
+                    this.angle += 0.05;
+                    ctx.rotate(this.angle);
+                }
+
+                // Dessin du Boss (Style différent selon type)
+                drawNeonRect(-this.width/2, -this.height/2, this.width, this.height, this.color, 30);
+
+                // "Yeux"
+                ctx.fillStyle = 'black';
+                ctx.fillRect(-20, -10, 10, 10);
+                ctx.fillRect(10, -10, 10, 10);
+
+                ctx.restore();
+
+                // Barre de vie du Boss
+                this.drawHealthBar();
+            }
+
+            drawHealthBar() {
+                const barWidth = 400;
+                const barHeight = 20;
+                const x = (canvas.width - barWidth) / 2;
+                const y = 20;
+
+                // Fond
+                ctx.fillStyle = '#333';
+                ctx.fillRect(x, y, barWidth, barHeight);
+
+                // Vie actuelle
+                const pct = Math.max(0, this.hp / this.maxHp);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillRect(x, y, barWidth * pct, barHeight);
+                ctx.shadowBlur = 0;
+
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, barWidth, barHeight);
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`BOSS LEVEL ${this.level}`, canvas.width/2, y + 16);
             }
         }
 
@@ -374,6 +506,7 @@
             gameOverOverlay.style.display = 'none';
             boostEndTime = 0;
             doubleFireEndTime = 0;
+            boss = null;
             updateUI();
             createEnemies();
             animate();
@@ -381,6 +514,8 @@
 
         function createEnemies() {
             enemies = [];
+            boss = null; // S'assurer qu'il n'y a pas de boss
+            waveLoading = false; // Fin du chargement
             for (let row = 0; row < 5; row++) {
                 for (let col = 0; col < 10; col++) {
                     // Alterne les couleurs néon selon la ligne
@@ -391,6 +526,12 @@
                 }
             }
             enemyDirectionX = 1;
+        }
+
+        function spawnBoss() {
+            boss = new Boss(level); // Le niveau a déjà été incrémenté ? Non, on utilise le niveau actuel pour le boss de fin de vague
+            // NOTE: Dans la logique actuelle 'level' augmente après le clear.
+            // On va adapter : Clear enemies -> Boss -> Boss Dead -> Level++ -> Enemies
         }
 
         // Fonction pour générer une explosion à un endroit donné
@@ -591,11 +732,55 @@
                 });
                 enemies = enemies.filter(e => !e.markedForDeletion);
 
-                // Gagner : plus d'ennemis
-                if (enemies.length === 0 && gameRunning) {
-                    // Réapparition simple pour la démo, on pourrait faire des niveaux
-                    enemySpeed += 0.5;
-                    createEnemies();
+                // --- Gestion du Boss ---
+                if (boss) {
+                    boss.update();
+                    boss.draw();
+
+                    // Collision Projectile Joueur -> Boss
+                    bullets.forEach(bullet => {
+                        if (bullet.isPlayerBullet && !bullet.markedForDeletion) {
+                            if (checkCollision(bullet, boss)) {
+                                bullet.markedForDeletion = true;
+                                boss.hp -= 1; // Dégâts standards
+                                createExplosion(bullet.x, bullet.y, boss.color);
+
+                                if (boss.hp <= 0) {
+                                    // Boss vaincu
+                                    const bossX = boss.x;
+                                    const bossY = boss.y;
+                                    createExplosion(boss.x + boss.width/2, boss.y + boss.height/2, boss.color);
+                                    score += 500;
+                                    boss = null;
+
+                                    // Drop bonus garanti du Boss (au centre du boss mort)
+                                    powerUps.push(new PowerUp(bossX + 50, bossY + 40, 'DOUBLE'));
+
+                                    // Niveau suivant
+                                    level++;
+                                    enemySpeed += 0.5;
+                                    updateUI();
+
+                                    // Préparer la prochaine vague
+                                    waveLoading = true;
+                                    setTimeout(createEnemies, 2000);
+                                }
+                            }
+                        }
+                    });
+
+                    // Collision Boss -> Joueur
+                     if (checkCollision(boss, player)) {
+                        lives = 0;
+                        updateUI();
+                        gameOver();
+                    }
+                }
+
+                // Gagner vague normale : plus d'ennemis ET pas de boss ET pas en attente de vague
+                if (enemies.length === 0 && !boss && !waveLoading && gameRunning) {
+                    // Spawn Boss au lieu de la prochaine vague
+                    spawnBoss();
                 }
             }
 
