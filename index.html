@@ -319,6 +319,42 @@
 
                 this.dx = 3 + level * 0.5;
                 this.angle = 0;
+
+                // Gestion des parties destructibles
+                this.parts = [];
+                this.initParts();
+                this.speedNerf = 1;
+                this.fireRateNerf = 1;
+            }
+
+            initParts() {
+                // Créer 2 parties destructibles (Gauches / Droite)
+                // Elles sont positionnées relative à x,y du boss
+                // Nerf: Tank -> Vitesse, Speeder -> Vitesse, Spinner -> Vitesse (pour simplifier)
+                this.parts.push({
+                    relX: -20, relY: 10, width: 20, height: 20,
+                    hp: 20 + this.level * 5, maxHp: 20 + this.level * 5,
+                    active: true, color: '#ffaaaa'
+                });
+                this.parts.push({
+                    relX: this.width, relY: 10, width: 20, height: 20,
+                    hp: 20 + this.level * 5, maxHp: 20 + this.level * 5,
+                    active: true, color: '#ffaaaa'
+                });
+            }
+
+            damagePart(index, amount) {
+                if (this.parts[index].active) {
+                    this.parts[index].hp -= amount;
+                    if (this.parts[index].hp <= 0) {
+                        this.parts[index].active = false;
+                        // Appliquer Nerf
+                        this.speedNerf *= 0.5; // Ralentit de 50%
+                        this.fireRateNerf *= 1.5; // Tire moins souvent (intervalle x1.5)
+                        return true; // Partie détruite
+                    }
+                }
+                return false;
             }
 
             update() {
@@ -328,22 +364,26 @@
                     return;
                 }
 
-                // Mouvement
-                if (this.type === 0) { // Tank : Lent, gauche droite
-                    this.x += Math.sin(frameCount * 0.02) * 2;
-                } else if (this.type === 1) { // Speeder : Rapide
-                    this.x += Math.cos(frameCount * 0.05) * 5;
-                } else { // Spinner : Mouvement en huit
-                    this.x += Math.cos(frameCount * 0.03) * 4;
-                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
+                // Mouvement avec Nerf
+                let moveX = 0;
+                if (this.type === 0) { // Tank
+                    moveX = Math.sin(frameCount * 0.02) * 2;
+                } else if (this.type === 1) { // Speeder
+                    moveX = Math.cos(frameCount * 0.05) * 5;
+                } else { // Spinner
+                    moveX = Math.cos(frameCount * 0.03) * 4;
+                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20 * this.speedNerf;
                 }
+
+                this.x += moveX * this.speedNerf;
 
                 // Garder dans l'écran
                 if (this.x < 0) this.x = 0;
                 if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
 
-                // Tirs Spéciaux
-                if (frameCount % (60 - Math.min(this.level * 2, 40)) === 0) {
+                // Tirs Spéciaux avec Nerf
+                let fireInterval = (60 - Math.min(this.level * 2, 40)) * this.fireRateNerf;
+                if (frameCount % Math.floor(fireInterval) === 0) {
                     this.shoot();
                 }
             }
@@ -375,6 +415,13 @@
             }
 
             draw() {
+                // Dessiner les parties destructibles
+                this.parts.forEach(part => {
+                    if (part.active) {
+                        drawNeonRect(this.x + part.relX, this.y + part.relY, part.width, part.height, part.color, 10);
+                    }
+                });
+
                 ctx.save();
                 ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
 
@@ -792,7 +839,34 @@
 
                     // Collision Projectile Joueur -> Boss
                     bullets.forEach(bullet => {
-                        if (bullet.isPlayerBullet && !bullet.markedForDeletion) {
+                        if (bullet.isPlayerBullet && !bullet.markedForDeletion && boss) {
+                            let hit = false;
+
+                            // 1. Vérifier les parties destructibles
+                            boss.parts.forEach((part, index) => {
+                                if (part.active) {
+                                    // Coordonnées absolues de la partie
+                                    const pRect = {
+                                        x: boss.x + part.relX,
+                                        y: boss.y + part.relY,
+                                        width: part.width,
+                                        height: part.height
+                                    };
+                                    if (checkCollision(bullet, pRect)) {
+                                        bullet.markedForDeletion = true;
+                                        hit = true;
+                                        if (boss.damagePart(index, 5)) {
+                                            createExplosion(pRect.x + 10, pRect.y + 10, '#ffffff'); // Explosion blanche pour partie détruite
+                                        } else {
+                                            createExplosion(bullet.x, bullet.y, part.color);
+                                        }
+                                    }
+                                }
+                            });
+
+                            if (hit) return; // Si touche une partie, ne touche pas le corps principal
+
+                            // 2. Vérifier le corps principal
                             if (checkCollision(bullet, boss)) {
                                 bullet.markedForDeletion = true;
                                 boss.hp -= 1; // Dégâts standards
@@ -823,7 +897,7 @@
                     });
 
                     // Collision Boss -> Joueur
-                     if (checkCollision(boss, player)) {
+                    if (boss && checkCollision(boss, player)) {
                         lives = 0;
                         updateUI();
                         gameOver();
