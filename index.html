@@ -320,27 +320,46 @@
                 this.dx = 3 + level * 0.5;
                 this.angle = 0;
 
-                // Gestion des parties destructibles
+                // Gestion des parties destructibles (Canons)
                 this.parts = [];
                 this.initParts();
-                this.speedNerf = 1;
-                this.fireRateNerf = 1;
             }
 
             initParts() {
-                // Créer 2 parties destructibles (Gauches / Droite)
-                // Elles sont positionnées relative à x,y du boss
-                // Nerf: Tank -> Vitesse, Speeder -> Vitesse, Spinner -> Vitesse (pour simplifier)
-                this.parts.push({
-                    relX: -20, relY: 10, width: 20, height: 20,
-                    hp: 20 + this.level * 5, maxHp: 20 + this.level * 5,
-                    active: true, color: '#ffaaaa'
-                });
-                this.parts.push({
-                    relX: this.width, relY: 10, width: 20, height: 20,
-                    hp: 20 + this.level * 5, maxHp: 20 + this.level * 5,
-                    active: true, color: '#ffaaaa'
-                });
+                // Créer des parties destructibles qui agissent comme des canons
+                // Configuration selon le type de boss
+                this.parts = [];
+                const hp = 20 + this.level * 5;
+
+                if (this.type === 0) { // Tank : Gros canons latéraux
+                    this.parts.push({
+                        relX: -30, relY: 10, width: 30, height: 40,
+                        hp: hp, maxHp: hp, active: true, color: '#ff4444'
+                    });
+                    this.parts.push({
+                        relX: this.width, relY: 10, width: 30, height: 40,
+                        hp: hp, maxHp: hp, active: true, color: '#ff4444'
+                    });
+                } else if (this.type === 1) { // Speeder : Canons d'ailes
+                    this.parts.push({
+                        relX: -20, relY: 20, width: 20, height: 30,
+                        hp: hp, maxHp: hp, active: true, color: '#44ffff'
+                    });
+                    this.parts.push({
+                        relX: this.width, relY: 20, width: 20, height: 30,
+                        hp: hp, maxHp: hp, active: true, color: '#44ffff'
+                    });
+                } else { // Spinner : Emetteurs sur les pointes
+                    // On les place aux coins opposés
+                    this.parts.push({
+                        relX: -10, relY: -10, width: 20, height: 20,
+                        hp: hp, maxHp: hp, active: true, color: '#cc44ff'
+                    });
+                    this.parts.push({
+                        relX: this.width - 10, relY: this.height - 10, width: 20, height: 20,
+                        hp: hp, maxHp: hp, active: true, color: '#cc44ff'
+                    });
+                }
             }
 
             damagePart(index, amount) {
@@ -348,9 +367,6 @@
                     this.parts[index].hp -= amount;
                     if (this.parts[index].hp <= 0) {
                         this.parts[index].active = false;
-                        // Appliquer Nerf
-                        this.speedNerf *= 0.5; // Ralentit de 50%
-                        this.fireRateNerf *= 1.5; // Tire moins souvent (intervalle x1.5)
                         return true; // Partie détruite
                     }
                 }
@@ -364,7 +380,7 @@
                     return;
                 }
 
-                // Mouvement avec Nerf
+                // Mouvement
                 let moveX = 0;
                 if (this.type === 0) { // Tank
                     moveX = Math.sin(frameCount * 0.02) * 2;
@@ -372,17 +388,17 @@
                     moveX = Math.cos(frameCount * 0.05) * 5;
                 } else { // Spinner
                     moveX = Math.cos(frameCount * 0.03) * 4;
-                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20 * this.speedNerf;
+                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
                 }
 
-                this.x += moveX * this.speedNerf;
+                this.x += moveX;
 
                 // Garder dans l'écran
                 if (this.x < 0) this.x = 0;
                 if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
 
-                // Tirs Spéciaux avec Nerf
-                let fireInterval = (60 - Math.min(this.level * 2, 40)) * this.fireRateNerf;
+                // Tirs Spéciaux
+                let fireInterval = 60 - Math.min(this.level * 2, 40);
                 if (frameCount % Math.floor(fireInterval) === 0) {
                     this.shoot();
                 }
@@ -392,24 +408,65 @@
                 const centerX = this.x + this.width / 2;
                 const bottomY = this.y + this.height;
 
-                if (this.type === 0) {
-                    // Tir en éventail (3 balles)
+                if (this.type === 0) { // Tank
+                    // Canon Principal (Toujours actif)
                     bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, 0));
-                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, -2));
-                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, 2));
-                } else if (this.type === 1) {
-                    // Tir rapide ciblé (Vise un peu le joueur)
+
+                    // Canon Gauche
+                    if (this.parts[0].active) {
+                        const p = this.parts[0];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, 5, this.color, false, -1.5));
+                    }
+                    // Canon Droit
+                    if (this.parts[1].active) {
+                        const p = this.parts[1];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, 5, this.color, false, 1.5));
+                    }
+                } else if (this.type === 1) { // Speeder
+                    // Le Speeder tire principalement depuis ses ailes (canons destructibles)
+                    // Si plus de canons, tir central faible
+
+                    let fired = false;
                     const angle = Math.atan2(player.y - bottomY, player.x - centerX);
                     const vx = Math.cos(angle) * 7;
                     const vy = Math.sin(angle) * 7;
-                    bullets.push(new Bullet(centerX, bottomY, vy, this.color, false, vx));
-                } else {
-                    // Tir circulaire (Burst)
-                    for (let i = 0; i < 8; i++) {
-                        const angle = (Math.PI * 2 / 8) * i + frameCount * 0.1;
-                        const vx = Math.cos(angle) * 5;
-                        const vy = Math.sin(angle) * 5;
-                        bullets.push(new Bullet(centerX + vx*5, bottomY + vy*5, vy, this.color, false, vx));
+
+                    if (this.parts[0].active) {
+                        const p = this.parts[0];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, vy, this.color, false, vx));
+                        fired = true;
+                    }
+                    if (this.parts[1].active) {
+                        const p = this.parts[1];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, vy, this.color, false, vx));
+                        fired = true;
+                    }
+
+                    if (!fired) {
+                        // Tir de secours si tout cassé
+                         bullets.push(new Bullet(centerX, bottomY, vy * 0.8, this.color, false, vx * 0.8));
+                    }
+
+                } else { // Spinner
+                    // Tir rotatif depuis les émetteurs
+
+                    // Partie 1
+                    if (this.parts[0].active) {
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (Math.PI * 2 / 4) * i + frameCount * 0.1;
+                            const vx = Math.cos(angle) * 5;
+                            const vy = Math.sin(angle) * 5;
+                            bullets.push(new Bullet(centerX, this.y + this.height/2, vy, this.color, false, vx));
+                        }
+                    }
+                    // Partie 2 (Décalée de 45 deg)
+                     if (this.parts[1].active) {
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (Math.PI * 2 / 4) * i + frameCount * 0.1 + (Math.PI/4);
+                            const vx = Math.cos(angle) * 5;
+                            const vy = Math.sin(angle) * 5;
+                            bullets.push(new Bullet(centerX, this.y + this.height/2, vy, this.color, false, vx));
+                        }
                     }
                 }
             }
