@@ -133,7 +133,7 @@
             BULLET: '#ffffff', // Blanc pur
             POWERUP_SPEED: '#ffff00', // Jaune (Vitesse)
             POWERUP_DOUBLE: '#0000ff', // Bleu (Double Tir)
-            BOSS: ['#ff0000', '#00ff00', '#ff8800'] // Palette Boss
+            BOSS: ['#ff0033', '#00ffcc', '#cc00ff'] // Palette Cyberpunk (Rouge Néon, Cyan Cyber, Violet Électrique)
         };
 
         // Gestion des touches
@@ -384,13 +384,66 @@
                     ctx.rotate(this.angle);
                 }
 
-                // Dessin du Boss (Style différent selon type)
-                drawNeonRect(-this.width/2, -this.height/2, this.width, this.height, this.color, 30);
+                // Style Cyberpunk commun
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 20;
+                ctx.fillStyle = 'rgba(0,0,0,0.8)'; // Fond sombre semi-transparent
 
-                // "Yeux"
-                ctx.fillStyle = 'black';
-                ctx.fillRect(-20, -10, 10, 10);
-                ctx.fillRect(10, -10, 10, 10);
+                ctx.beginPath();
+                if (this.type === 0) {
+                    // TANK : Forme Hexagonale massive
+                    const s = this.width / 2;
+                    ctx.moveTo(-s, -s/2);
+                    ctx.lineTo(-s/2, -s);
+                    ctx.lineTo(s/2, -s);
+                    ctx.lineTo(s, -s/2);
+                    ctx.lineTo(s, s/2);
+                    ctx.lineTo(s/2, s);
+                    ctx.lineTo(-s/2, s);
+                    ctx.lineTo(-s, s/2);
+                    ctx.closePath();
+                    // Détails internes
+                    ctx.moveTo(-s/2, 0); ctx.lineTo(s/2, 0);
+                    ctx.moveTo(0, -s/2); ctx.lineTo(0, s/2);
+                } else if (this.type === 1) {
+                    // SPEEDER : Forme de flèche/Jet
+                    const w = this.width / 2;
+                    const h = this.height / 2;
+                    ctx.moveTo(0, h);
+                    ctx.lineTo(w, -h);
+                    ctx.lineTo(0, -h + 15); // Encoche arrière
+                    ctx.lineTo(-w, -h);
+                    ctx.closePath();
+                    // Lignes de vitesse
+                    ctx.moveTo(-w/2, 0); ctx.lineTo(-w/2, h/2);
+                    ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h/2);
+                } else {
+                    // SPINNER : Étoile Ninja / Shuriken
+                    const size = this.width / 2;
+                    for (let i = 0; i < 4; i++) {
+                        ctx.rotate(Math.PI / 2);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(10, 10);
+                        ctx.lineTo(size, 0);
+                        ctx.lineTo(10, -10);
+                    }
+                    ctx.closePath();
+                    // Cercle central
+                    ctx.moveTo(15, 0);
+                    ctx.arc(0, 0, 15, 0, Math.PI * 2);
+                }
+
+                ctx.fill();
+                ctx.stroke();
+
+                // "Core" Lumineux (Point faible visuel)
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(0, 0, 5, 0, Math.PI*2);
+                ctx.fill();
 
                 ctx.restore();
 
@@ -662,13 +715,13 @@
                                 createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color);
                                 score += 20;
 
-                                // Drop PowerUp
+                                // Drop PowerUp (Taux réduits)
                                 const rand = Math.random();
-                                if (rand < 0.10) {
-                                    // 10% chance pour Double Tir
+                                if (rand < 0.05) {
+                                    // 5% chance pour Double Tir (était 10%)
                                     powerUps.push(new PowerUp(enemy.x, enemy.y, 'DOUBLE'));
-                                } else if (rand < 0.25) {
-                                    // 15% chance pour Vitesse (cumulatif : 0.10 à 0.25)
+                                } else if (rand < 0.15) {
+                                    // 10% chance pour Vitesse (cumulatif : 0.05 à 0.15) (était 15%)
                                     powerUps.push(new PowerUp(enemy.x, enemy.y, 'SPEED'));
                                 }
 
