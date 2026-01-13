@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Space Invaders</title>
+    <style>
+        /* --- STYLE CSS : Esthétique Néon --- */
+        :root {
+            --bg-color: #050505;
+            --neon-cyan: #00ffff;
+            --neon-magenta: #ff00ff;
+            --neon-yellow: #ffff00;
+            --text-glow: 0 0 5px currentColor, 0 0 10px currentColor;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #ui-container {
+            width: 800px;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .neon-text-cyan { color: var(--neon-cyan); text-shadow: var(--text-glow); }
+        .neon-text-magenta { color: var(--neon-magenta); text-shadow: var(--text-glow); }
+
+        canvas {
+            background-color: #0a0a0a;
+            /* Effet de bordure lumineuse subtile */
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2), 0 0 40px rgba(255, 0, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        /* Superposition Game Over */
+        #game-over-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none; /* Caché par défaut */
+            z-index: 10;
+        }
+
+        #game-over-overlay h1 {
+            font-size: 4em;
+            margin: 0;
+            color: var(--neon-magenta);
+            text-shadow: 0 0 10px var(--neon-magenta), 0 0 20px var(--neon-magenta), 0 0 30px var(--neon-cyan);
+            animation: pulse 1.5s infinite alternate;
+        }
+
+        #replay-btn {
+            margin-top: 20px;
+            padding: 10px 30px;
+            font-size: 1.2em;
+            background: transparent;
+            color: var(--neon-cyan);
+            border: 2px solid var(--neon-cyan);
+            box-shadow: 0 0 10px var(--neon-cyan);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        #replay-btn:hover {
+            background: var(--neon-cyan);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan);
+        }
+
+        @keyframes pulse {
+            from { opacity: 0.8; transform: scale(1); }
+            to { opacity: 1; transform: scale(1.05); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <div class="neon-text-cyan">Score: <span id="score">0</span></div>
+        <div class="neon-text-magenta">Vies: <span id="lives">3</span></div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div id="game-over-overlay">
+        <h1>GAME OVER</h1>
+        <button id="replay-btn">REJOUER LA MISSION</button>
+    </div>
+
+
+    <script>
+        // ==========================================
+        // CONFIGURATION ET VARIABLES GLOBALES
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const gameOverOverlay = document.getElementById('game-over-overlay');
+        const replayBtn = document.getElementById('replay-btn');
+
+        let gameRunning = true;
+        let score = 0;
+        let lives = 3;
+        let level = 1;
+        let frameCount = 0;
+        let boostEndTime = 0;
+        let doubleFireEndTime = 0;
+        let boss = null; // Variable pour le Boss
+        let waveLoading = false; // Flag pour éviter le spawn prématuré du boss
+
+        // Couleurs Néon
+        const COLORS = {
+            PLAYER: '#00ffff', // Cyan
+            ENEMY_1: '#ff00ff', // Magenta
+            ENEMY_2: '#ffff00', // Jaune fluo
+            BULLET: '#ffffff', // Blanc pur
+            POWERUP_SPEED: '#ffff00', // Jaune (Vitesse)
+            POWERUP_DOUBLE: '#0000ff', // Bleu (Double Tir)
+            BOSS: ['#ff0033', '#00ffcc', '#cc00ff'] // Palette Cyberpunk (Rouge Néon, Cyan Cyber, Violet Électrique)
+        };
+
+        // Gestion des touches
+        const keys = { ArrowRight: false, ArrowLeft: false, Space: false };
+        document.addEventListener('keydown', (e) => { if(e.code === 'Space' || e.code.startsWith('Arrow')) keys[e.code] = true; });
+        document.addEventListener('keyup', (e) => { if(e.code === 'Space' || e.code.startsWith('Arrow')) keys[e.code] = false; });
+        replayBtn.addEventListener('click', resetGame);
+
+
+        // ==========================================
+        // CLASSES DU JEU
+        // ==========================================
+
+        // --- Classe : Vaisseau du Joueur ---
+        class Player {
+            constructor() {
+                this.width = 40;
+                this.height = 20;
+                this.x = canvas.width / 2 - this.width / 2;
+                this.y = canvas.height - 40;
+                this.speed = 6;
+                this.lastShotTime = 0;
+                this.baseShootDelay = 250; // ms entre les tirs
+                this.shootDelay = 250;
+                this.isDoubleFire = false;
+            }
+
+            update() {
+                if (keys.ArrowRight && this.x + this.width < canvas.width) this.x += this.speed;
+                if (keys.ArrowLeft && this.x > 0) this.x -= this.speed;
+
+                // Gestion du Boost Vitesse
+                if (Date.now() < boostEndTime) {
+                    this.shootDelay = this.baseShootDelay / 2;
+                } else {
+                    this.shootDelay = this.baseShootDelay;
+                }
+
+                // Gestion Double Tir
+                this.isDoubleFire = (Date.now() < doubleFireEndTime);
+
+                if (keys.Space) {
+                    const now = Date.now();
+                    if (now - this.lastShotTime > this.shootDelay) {
+                        if (this.isDoubleFire) {
+                            // Double tir : décalage de -10 et +10 par rapport au centre
+                            bullets.push(new Bullet(this.x + this.width / 2 - 10, this.y, -8, COLORS.PLAYER, true));
+                            bullets.push(new Bullet(this.x + this.width / 2 + 10, this.y, -8, COLORS.PLAYER, true));
+                        } else {
+                            bullets.push(new Bullet(this.x + this.width / 2, this.y, -8, COLORS.PLAYER, true));
+                        }
+                        this.lastShotTime = now;
+                    }
+                }
+            }
+
+            draw() {
+                drawNeonRect(this.x, this.y, this.width, this.height, COLORS.PLAYER, 20);
+            }
+        }
+
+        // --- Classe : PowerUp ---
+        class PowerUp {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.width = 20;
+                this.height = 20;
+                this.type = type; // 'SPEED' ou 'DOUBLE'
+                this.velocityY = 3;
+                this.markedForDeletion = false;
+
+                if (this.type === 'DOUBLE') {
+                    this.color = COLORS.POWERUP_DOUBLE;
+                    this.symbol = '2';
+                } else {
+                    this.color = COLORS.POWERUP_SPEED;
+                    this.symbol = 'P';
+                }
+            }
+
+            update() {
+                this.y += this.velocityY;
+                if (this.y > canvas.height) this.markedForDeletion = true;
+            }
+
+            draw() {
+                drawNeonRect(this.x, this.y, this.width, this.height, this.color, 15);
+                // Si c'est bleu (Double), texte blanc; si jaune (Speed), texte noir
+                ctx.fillStyle = (this.type === 'DOUBLE') ? 'white' : 'black';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.symbol, this.x + this.width / 2, this.y + this.height / 2);
+            }
+        }
+
+        // --- Classe : Projectile ---
+        class Bullet {
+            constructor(x, y, velocityY, color, isPlayerBullet, velocityX = 0) {
+                this.x = x;
+                this.y = y;
+                this.width = 4;
+                this.height = 10;
+                this.velocityY = velocityY;
+                this.velocityX = velocityX;
+                this.color = color;
+                this.isPlayerBullet = isPlayerBullet;
+                this.markedForDeletion = false;
+            }
+
+            update() {
+                this.y += this.velocityY;
+                this.x += this.velocityX;
+                if (this.y < 0 || this.y > canvas.height || this.x < 0 || this.x > canvas.width) this.markedForDeletion = true;
+            }
+
+            draw() {
+                drawNeonRect(this.x - this.width/2, this.y, this.width, this.height, this.color, 10);
+            }
+        }
+
+        // --- Classe : Ennemi ---
+        class Enemy {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.width = 25;
+                this.height = 25;
+                this.color = color;
+                this.markedForDeletion = false;
+
+                // *** EXPLICATION PEDAGOGIQUE : ROTATION ***
+                // Pour faire tourner un objet, nous avons besoin d'un angle qui change avec le temps.
+                this.angle = 0;
+                this.rotationSpeed = Math.random() * 0.04 + 0.02; // Vitesse de rotation aléatoire
+            }
+
+            update(velocityX, velocityY) {
+                this.x += velocityX;
+                this.y += velocityY;
+                // On incrémente l'angle à chaque frame pour animer la rotation.
+                this.angle += this.rotationSpeed;
+            }
+
+            draw() {
+                // *** EXPLICATION PEDAGOGIQUE : DESSINER LA ROTATION ***
+                // Dessiner un rectangle tourné n'est pas aussi simple que de changer ses coordonnées.
+                // Il faut manipuler le contexte (le "pinceau") du canvas.
+
+                ctx.save(); // 1. Sauvegarde l'état actuel du contexte (sans rotation).
+
+                // 2. On déplace le point d'origine (0,0) du contexte au CENTRE de l'ennemi.
+                // C'est l'étape cruciale : on tourne autour du centre, pas du coin supérieur gauche.
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+
+                // 3. On fait pivoter le contexte selon l'angle actuel de l'ennemi.
+                ctx.rotate(this.angle);
+
+                // 4. On dessine le rectangle. Comme notre origine (0,0) est maintenant au centre
+                // de l'ennemi, on doit dessiner le rectangle de -width/2 à -height/2 pour qu'il soit centré.
+                drawNeonRect(-this.width / 2, -this.height / 2, this.width, this.height, this.color, 15);
+
+                ctx.restore(); // 5. Restaure l'état sauvegardé en 1. Le prochain dessin ne sera pas affecté par cette rotation.
+            }
+        }
+
+        // --- Classe : BOSS ---
+        class Boss {
+            constructor(level) {
+                this.width = 100;
+                this.height = 80;
+                this.x = canvas.width / 2 - this.width / 2;
+                this.y = -100; // Commence hors écran
+                this.targetY = 50;
+                this.level = level;
+                this.maxHp = 50 + (level * 30);
+                this.hp = this.maxHp;
+
+                // Apparence aléatoire basée sur le niveau
+                this.color = COLORS.BOSS[(level - 1) % COLORS.BOSS.length];
+                this.type = (level - 1) % 3; // 0: Tank, 1: Speeder, 2: Spinner
+
+                this.dx = 3 + level * 0.5;
+                this.angle = 0;
+
+                // Gestion des parties destructibles (Canons)
+                this.parts = [];
+                this.initParts();
+
+                // --- NOUVELLES FONCTIONNALITÉS BOSS ---
+                // 1. Drones Boucliers
+                this.drones = [];
+                this.initDrones();
+
+                // 2. Mega Laser
+                this.laserState = 'NORMAL'; // NORMAL, CHARGING, FIRING
+                this.laserTimer = 0;
+                this.chargeDuration = 120; // 2 secondes de charge (à 60fps)
+                this.fireDuration = 60;   // 1 seconde de tir
+            }
+
+            initDrones() {
+                // 3 Drones orbitaux
+                for(let i=0; i<3; i++) {
+                    this.drones.push({
+                        angle: (Math.PI * 2 / 3) * i,
+                        distance: 90,
+                        size: 15,
+                        color: '#ffffff',
+                        rotationSpeed: 0.03
+                    });
+                }
+            }
+
+            initParts() {
+                // Créer des parties destructibles qui agissent comme des canons
+                // Configuration selon le type de boss
+                this.parts = [];
+                const hp = 20 + this.level * 5;
+
+                if (this.type === 0) { // Tank : Gros canons latéraux
+                    this.parts.push({
+                        relX: -30, relY: 10, width: 30, height: 40,
+                        hp: hp, maxHp: hp, active: true, color: '#ff4444'
+                    });
+                    this.parts.push({
+                        relX: this.width, relY: 10, width: 30, height: 40,
+                        hp: hp, maxHp: hp, active: true, color: '#ff4444'
+                    });
+                } else if (this.type === 1) { // Speeder : Canons d'ailes
+                    this.parts.push({
+                        relX: -20, relY: 20, width: 20, height: 30,
+                        hp: hp, maxHp: hp, active: true, color: '#44ffff'
+                    });
+                    this.parts.push({
+                        relX: this.width, relY: 20, width: 20, height: 30,
+                        hp: hp, maxHp: hp, active: true, color: '#44ffff'
+                    });
+                } else { // Spinner : Emetteurs sur les pointes
+                    // On les place aux coins opposés
+                    this.parts.push({
+                        relX: -10, relY: -10, width: 20, height: 20,
+                        hp: hp, maxHp: hp, active: true, color: '#cc44ff'
+                    });
+                    this.parts.push({
+                        relX: this.width - 10, relY: this.height - 10, width: 20, height: 20,
+                        hp: hp, maxHp: hp, active: true, color: '#cc44ff'
+                    });
+                }
+            }
+
+            damagePart(index, amount) {
+                if (this.parts[index].active) {
+                    this.parts[index].hp -= amount;
+                    if (this.parts[index].hp <= 0) {
+                        this.parts[index].active = false;
+                        return true; // Partie détruite
+                    }
+                }
+                return false;
+            }
+
+            update() {
+                // Entrée en scène
+                if (this.y < this.targetY) {
+                    this.y += 2;
+                    return;
+                }
+
+                // --- Mise à jour des Drones ---
+                this.drones.forEach(d => d.angle += d.rotationSpeed);
+
+
+                // --- Machine à états du Laser ---
+                if (this.laserState === 'NORMAL') {
+                    // Comportement normal (Mouvement + Tir)
+
+                    // Mouvement
+                    let moveX = 0;
+                    if (this.type === 0) { // Tank
+                        moveX = Math.sin(frameCount * 0.02) * 2;
+                    } else if (this.type === 1) { // Speeder
+                        moveX = Math.cos(frameCount * 0.05) * 5;
+                    } else { // Spinner
+                        moveX = Math.cos(frameCount * 0.03) * 4;
+                        this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
+                    }
+                    this.x += moveX;
+
+                    // Garder dans l'écran
+                    if (this.x < 0) this.x = 0;
+                    if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+
+                    // Tirs Spéciaux
+                    let fireInterval = 60 - Math.min(this.level * 2, 40);
+                    if (frameCount % Math.floor(fireInterval) === 0) {
+                        this.shoot();
+                    }
+
+                    // Chance de déclencher le Laser (1% par frame)
+                    if (Math.random() < 0.005) {
+                        this.laserState = 'CHARGING';
+                        this.laserTimer = this.chargeDuration;
+                    }
+
+                } else if (this.laserState === 'CHARGING') {
+                    // Le boss s'arrête et charge
+                    this.laserTimer--;
+                    if (this.laserTimer <= 0) {
+                        this.laserState = 'FIRING';
+                        this.laserTimer = this.fireDuration;
+                        // Son de tir ?
+                    }
+
+                } else if (this.laserState === 'FIRING') {
+                    // Tir du rayon
+                    // Collision Rayon -> Joueur
+                    const beamX = this.x + this.width/2 - 25;
+                    const beamW = 50;
+                    // hitbox simple rect vs rect (le rayon fait toute la hauteur)
+                    if (player.x < beamX + beamW && player.x + player.width > beamX) {
+                        // Le joueur est touché !
+                        lives--;
+                        updateUI();
+                        createExplosion(player.x + player.width/2, player.y, COLORS.PLAYER);
+                        if (lives <= 0) gameOver();
+                    }
+
+                    this.laserTimer--;
+                    if (this.laserTimer <= 0) {
+                        this.laserState = 'NORMAL';
+                    }
+                }
+            }
+
+            shoot() {
+                const centerX = this.x + this.width / 2;
+                const bottomY = this.y + this.height;
+
+                if (this.type === 0) { // Tank
+                    // Canon Principal (Toujours actif)
+                    bullets.push(new Bullet(centerX, bottomY, 5, this.color, false, 0));
+
+                    // Canon Gauche
+                    if (this.parts[0].active) {
+                        const p = this.parts[0];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, 5, this.color, false, -1.5));
+                    }
+                    // Canon Droit
+                    if (this.parts[1].active) {
+                        const p = this.parts[1];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, 5, this.color, false, 1.5));
+                    }
+                } else if (this.type === 1) { // Speeder
+                    // Le Speeder tire principalement depuis ses ailes (canons destructibles)
+                    // Si plus de canons, tir central faible
+
+                    let fired = false;
+                    const angle = Math.atan2(player.y - bottomY, player.x - centerX);
+                    const vx = Math.cos(angle) * 7;
+                    const vy = Math.sin(angle) * 7;
+
+                    if (this.parts[0].active) {
+                        const p = this.parts[0];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, vy, this.color, false, vx));
+                        fired = true;
+                    }
+                    if (this.parts[1].active) {
+                        const p = this.parts[1];
+                        bullets.push(new Bullet(this.x + p.relX + p.width/2, this.y + p.relY + p.height, vy, this.color, false, vx));
+                        fired = true;
+                    }
+
+                    if (!fired) {
+                        // Tir de secours si tout cassé
+                         bullets.push(new Bullet(centerX, bottomY, vy * 0.8, this.color, false, vx * 0.8));
+                    }
+
+                } else { // Spinner
+                    // Tir rotatif depuis les émetteurs
+
+                    // Partie 1
+                    if (this.parts[0].active) {
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (Math.PI * 2 / 4) * i + frameCount * 0.1;
+                            const vx = Math.cos(angle) * 5;
+                            const vy = Math.sin(angle) * 5;
+                            bullets.push(new Bullet(centerX, this.y + this.height/2, vy, this.color, false, vx));
+                        }
+                    }
+                    // Partie 2 (Décalée de 45 deg)
+                     if (this.parts[1].active) {
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (Math.PI * 2 / 4) * i + frameCount * 0.1 + (Math.PI/4);
+                            const vx = Math.cos(angle) * 5;
+                            const vy = Math.sin(angle) * 5;
+                            bullets.push(new Bullet(centerX, this.y + this.height/2, vy, this.color, false, vx));
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                // 1. Dessiner le MEGA LASER (derrière le boss)
+                if (this.laserState === 'CHARGING') {
+                    // Pré-visualisation : Ligne fine vibrante
+                    ctx.save();
+                    const alpha = 0.5 + Math.random() * 0.5;
+                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    ctx.shadowColor = 'red';
+                    ctx.shadowBlur = 20;
+                    const beamX = this.x + this.width/2 - 2;
+                    ctx.fillRect(beamX, this.y + this.height - 20, 4, canvas.height);
+                    ctx.restore();
+                } else if (this.laserState === 'FIRING') {
+                    // TIR : Gros rayon
+                    const beamX = this.x + this.width/2;
+                    // Rayon externe
+                    drawNeonRect(beamX - 25, this.y + this.height - 20, 50, canvas.height, '#00ffff', 30);
+                    // Cœur blanc
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#ffffff';
+                    ctx.fillRect(beamX - 10, this.y + this.height - 20, 20, canvas.height);
+                    ctx.shadowBlur = 0;
+                }
+
+
+                // 2. Dessiner les parties destructibles
+                this.parts.forEach(part => {
+                    if (part.active) {
+                        drawNeonRect(this.x + part.relX, this.y + part.relY, part.width, part.height, part.color, 10);
+                    }
+                });
+
+                ctx.save();
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+
+                // Rotation pour le type Spinner
+                if (this.type === 2) {
+                    this.angle += 0.05;
+                    ctx.rotate(this.angle);
+                }
+
+                // Style Cyberpunk commun
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 20;
+                ctx.fillStyle = 'rgba(0,0,0,0.8)'; // Fond sombre semi-transparent
+
+                ctx.beginPath();
+                if (this.type === 0) {
+                    // TANK : Forme Hexagonale massive
+                    const s = this.width / 2;
+                    ctx.moveTo(-s, -s/2);
+                    ctx.lineTo(-s/2, -s);
+                    ctx.lineTo(s/2, -s);
+                    ctx.lineTo(s, -s/2);
+                    ctx.lineTo(s, s/2);
+                    ctx.lineTo(s/2, s);
+                    ctx.lineTo(-s/2, s);
+                    ctx.lineTo(-s, s/2);
+                    ctx.closePath();
+                    // Détails internes
+                    ctx.moveTo(-s/2, 0); ctx.lineTo(s/2, 0);
+                    ctx.moveTo(0, -s/2); ctx.lineTo(0, s/2);
+                } else if (this.type === 1) {
+                    // SPEEDER : Forme de flèche/Jet
+                    const w = this.width / 2;
+                    const h = this.height / 2;
+                    ctx.moveTo(0, h);
+                    ctx.lineTo(w, -h);
+                    ctx.lineTo(0, -h + 15); // Encoche arrière
+                    ctx.lineTo(-w, -h);
+                    ctx.closePath();
+                    // Lignes de vitesse
+                    ctx.moveTo(-w/2, 0); ctx.lineTo(-w/2, h/2);
+                    ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h/2);
+                } else {
+                    // SPINNER : Étoile Ninja / Shuriken
+                    const size = this.width / 2;
+                    for (let i = 0; i < 4; i++) {
+                        ctx.rotate(Math.PI / 2);
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(10, 10);
+                        ctx.lineTo(size, 0);
+                        ctx.lineTo(10, -10);
+                    }
+                    ctx.closePath();
+                    // Cercle central
+                    ctx.moveTo(15, 0);
+                    ctx.arc(0, 0, 15, 0, Math.PI * 2);
+                }
+
+                ctx.fill();
+                ctx.stroke();
+
+                // "Core" Lumineux (Point faible visuel)
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(0, 0, 5, 0, Math.PI*2);
+                ctx.fill();
+
+                ctx.restore();
+
+                // 3. Dessiner les Drones
+                const cx = this.x + this.width / 2;
+                const cy = this.y + this.height / 2;
+                this.drones.forEach(d => {
+                    const dx = cx + Math.cos(d.angle) * d.distance;
+                    const dy = cy + Math.sin(d.angle) * d.distance;
+                    drawNeonRect(dx - d.size/2, dy - d.size/2, d.size, d.size, d.color, 15);
+                    // Ligne de lien énergétique (optionnel, fun)
+                    ctx.beginPath();
+                    ctx.strokeStyle = `rgba(255, 255, 255, 0.2)`;
+                    ctx.lineWidth = 1;
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(dx, dy);
+                    ctx.stroke();
+                });
+
+                // Barre de vie du Boss
+                this.drawHealthBar();
+            }
+
+            drawHealthBar() {
+                const barWidth = 400;
+                const barHeight = 20;
+                const x = (canvas.width - barWidth) / 2;
+                const y = 20;
+
+                // Fond
+                ctx.fillStyle = '#333';
+                ctx.fillRect(x, y, barWidth, barHeight);
+
+                // Vie actuelle
+                const pct = Math.max(0, this.hp / this.maxHp);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillRect(x, y, barWidth * pct, barHeight);
+                ctx.shadowBlur = 0;
+
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, barWidth, barHeight);
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`BOSS LEVEL ${this.level}`, canvas.width/2, y + 16);
+            }
+        }
+
+
+        // --- Classe : Particule (pour les explosions) ---
+        // *** EXPLICATION PEDAGOGIQUE : SYSTEME DE PARTICULES ***
+        // Une explosion n'est qu'un ensemble de petits points (particules) qui partent
+        // d'un point central, se déplacent, et disparaissent progressivement (alpha).
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = Math.random() * 2 + 1; // Taille aléatoire
+                this.color = color;
+                // Vélocité aléatoire dans toutes les directions
+                this.vx = (Math.random() - 0.5) * 6;
+                this.vy = (Math.random() - 0.5) * 6;
+                this.alpha = 1; // Opacité initiale (complètement visible)
+                this.friction = 0.96; // Pour ralentir la particule avec le temps
+                this.markedForDeletion = false;
+            }
+
+            update() {
+                // Mouvement
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+                // Disparition progressive
+                this.alpha -= 0.02;
+                if (this.alpha <= 0) this.markedForDeletion = true;
+            }
+
+            draw() {
+                // Dessin d'un cercle néon avec transparence (alpha)
+                ctx.save();
+                ctx.globalAlpha = this.alpha; // Applique la transparence
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10; // Lueur
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // ==========================================
+        // FONCTIONS UTILITAIRES ET LOGIQUE DE JEU
+        // ==========================================
+
+        // Fonction pour dessiner un rectangle avec effet Néon
+        function drawNeonRect(x, y, w, h, color, blurAmount) {
+            ctx.shadowBlur = blurAmount;
+            ctx.shadowColor = color;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+            // Réinitialiser le shadow pour ne pas affecter les autres dessins non-néon (si besoin)
+            ctx.shadowBlur = 0;
+        }
+
+        let player;
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+        let powerUps = [];
+        let enemyDirectionX = 1;
+        let enemySpeed = 1.5;
+
+        function init() {
+            player = new Player();
+            bullets = [];
+            enemies = [];
+            particles = [];
+            powerUps = [];
+            score = 0;
+            lives = 3;
+            enemySpeed = 1.5;
+            gameRunning = true;
+            gameOverOverlay.style.display = 'none';
+            boostEndTime = 0;
+            doubleFireEndTime = 0;
+            boss = null;
+            updateUI();
+            createEnemies();
+            animate();
+        }
+
+        function createEnemies() {
+            enemies = [];
+            boss = null; // S'assurer qu'il n'y a pas de boss
+            waveLoading = false; // Fin du chargement
+            for (let row = 0; row < 5; row++) {
+                for (let col = 0; col < 10; col++) {
+                    // Alterne les couleurs néon selon la ligne
+                    let color = (row % 2 === 0) ? COLORS.ENEMY_1 : COLORS.ENEMY_2;
+                    let x = col * 50 + 50;
+                    let y = row * 40 + 40;
+                    enemies.push(new Enemy(x, y, color));
+                }
+            }
+            enemyDirectionX = 1;
+        }
+
+        function spawnBoss() {
+            boss = new Boss(level); // Le niveau a déjà été incrémenté ? Non, on utilise le niveau actuel pour le boss de fin de vague
+            // NOTE: Dans la logique actuelle 'level' augmente après le clear.
+            // On va adapter : Clear enemies -> Boss -> Boss Dead -> Level++ -> Enemies
+        }
+
+        // Fonction pour générer une explosion à un endroit donné
+        function createExplosion(x, y, color) {
+            // On crée 15 particules pour une explosion
+            for (let i = 0; i < 15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.width &&
+                rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height &&
+                rect1.y + rect1.height > rect2.y
+            );
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            gameOverOverlay.style.display = 'block';
+            createExplosion(player.x + player.width/2, player.y + player.height/2, COLORS.PLAYER);
+        }
+
+        function resetGame() {
+            init();
+        }
+
+        function updateUI() {
+            scoreEl.innerText = score;
+            livesEl.innerText = lives;
+        }
+
+        // ==========================================
+        // BOUCLE PRINCIPALE DU JEU
+        // ==========================================
+        function animate() {
+            if (!gameRunning && particles.length === 0) return; // Stop si game over ET plus de particules
+
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.4)'; // Trace légère pour effet de traînée
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (gameRunning) {
+                frameCount++;
+                player.update();
+                player.draw();
+            }
+
+            // --- Gestion des Particules (Explosions) ---
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+            // Filtrer les particules "mortes" (alpha <= 0)
+            particles = particles.filter(p => !p.markedForDeletion);
+
+            // --- Gestion des PowerUps ---
+            if (gameRunning) {
+                powerUps.forEach(p => {
+                    p.update();
+                    p.draw();
+                    if (checkCollision(p, player)) {
+                        p.markedForDeletion = true;
+                        if (p.type === 'DOUBLE') {
+                            // Active Double Tir (10 secondes)
+                            doubleFireEndTime = Date.now() + 10000;
+                        } else {
+                            // Active Boost Vitesse (5 secondes)
+                            boostEndTime = Date.now() + 5000;
+                        }
+                    }
+                });
+                powerUps = powerUps.filter(p => !p.markedForDeletion);
+
+                // Affichage du texte BOOST (Speed)
+                if (Date.now() < boostEndTime) {
+                    ctx.save();
+                    ctx.fillStyle = COLORS.POWERUP_SPEED;
+                    ctx.font = 'bold 24px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = COLORS.POWERUP_SPEED;
+                    ctx.fillText('BOOST!', canvas.width / 2, 30);
+                    ctx.restore();
+                }
+
+                // Affichage barre progression Double Tir
+                if (Date.now() < doubleFireEndTime) {
+                    const timeLeft = doubleFireEndTime - Date.now();
+                    const maxTime = 10000;
+                    const width = 200;
+                    const height = 10;
+                    const x = 20; // Position gauche
+                    const y = 60; // Sous le score (environ)
+
+                    // Fond de barre
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(x, y, width, height);
+
+                    // Barre de progression
+                    const progressWidth = (timeLeft / maxTime) * width;
+                    ctx.fillStyle = COLORS.POWERUP_DOUBLE;
+                    ctx.shadowColor = COLORS.POWERUP_DOUBLE;
+                    ctx.shadowBlur = 10;
+                    ctx.fillRect(x, y, progressWidth, height);
+                    ctx.shadowBlur = 0;
+
+                    // Texte indicateur
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('DOUBLE TIR', x, y - 5);
+                }
+
+                // --- Gestion des Projectiles ---
+                bullets.forEach(bullet => {
+                    bullet.update();
+                    bullet.draw();
+
+                    // Collisions Projectiles Joueur -> Ennemis
+                    if (bullet.isPlayerBullet) {
+                        enemies.forEach(enemy => {
+                            if (checkCollision(bullet, enemy)) {
+                                bullet.markedForDeletion = true;
+                                enemy.markedForDeletion = true;
+                                // *** DÉCLENCHEMENT DE L'EXPLOSION ***
+                                createExplosion(enemy.x + enemy.width/2, enemy.y + enemy.height/2, enemy.color);
+                                score += 20;
+
+                                // Drop PowerUp (Taux réduits)
+                                const rand = Math.random();
+                                if (rand < 0.05) {
+                                    // 5% chance pour Double Tir (était 10%)
+                                    powerUps.push(new PowerUp(enemy.x, enemy.y, 'DOUBLE'));
+                                } else if (rand < 0.15) {
+                                    // 10% chance pour Vitesse (cumulatif : 0.05 à 0.15) (était 15%)
+                                    powerUps.push(new PowerUp(enemy.x, enemy.y, 'SPEED'));
+                                }
+
+                                updateUI();
+                            }
+                        });
+                    }
+                    // Collisions Projectiles Ennemis -> Joueur
+                    else {
+                       if (checkCollision(bullet, player)) {
+                           bullet.markedForDeletion = true;
+                           lives--;
+                           updateUI();
+                           createExplosion(player.x + player.width/2, player.y, COLORS.PLAYER);
+                           if(lives <= 0) gameOver();
+                       }
+                    }
+                });
+                bullets = bullets.filter(b => !b.markedForDeletion);
+
+
+                // --- Gestion des Ennemis ---
+                let moveDown = false;
+                let mostRight = 0;
+                let mostLeft = canvas.width;
+
+                enemies.forEach(enemy => {
+                    // Tir des ennemis (aléatoire)
+                    if (frameCount % 60 === 0 && Math.random() < 0.03) {
+                        bullets.push(new Bullet(enemy.x + enemy.width/2, enemy.y + enemy.height, 4, enemy.color, false));
+                    }
+
+                    // Vérifier les bords pour le mouvement de groupe
+                    mostRight = Math.max(mostRight, enemy.x + enemy.width);
+                    mostLeft = Math.min(mostLeft, enemy.x);
+
+                    // Collision Ennemi -> Joueur (Game Over direct)
+                    if(checkCollision(enemy, player)) {
+                        lives = 0;
+                        updateUI();
+                        gameOver();
+                    }
+                    // Si un ennemi atteint le bas de l'écran
+                    if(enemy.y + enemy.height > canvas.height - 50) {
+                        lives = 0;
+                        updateUI();
+                        gameOver();
+                    }
+                });
+
+                if (mostRight > canvas.width - 20 || mostLeft < 20) {
+                    enemyDirectionX *= -1;
+                    moveDown = true;
+                    // Légère accélération à chaque descente
+                    enemySpeed = Math.min(enemySpeed + 0.2, 6);
+                }
+
+                enemies.forEach(enemy => {
+                    enemy.update(enemyDirectionX * enemySpeed, moveDown ? 20 : 0);
+                    enemy.draw();
+                });
+                enemies = enemies.filter(e => !e.markedForDeletion);
+
+                // --- Gestion du Boss ---
+                if (boss) {
+                    boss.update();
+                    boss.draw();
+
+                    // Collision Projectile Joueur -> Boss
+                    bullets.forEach(bullet => {
+                        if (bullet.isPlayerBullet && !bullet.markedForDeletion && boss) {
+
+                            // 0. Vérifier les Drones Boucliers
+                            let droneHit = false;
+                            const cx = boss.x + boss.width / 2;
+                            const cy = boss.y + boss.height / 2;
+
+                            boss.drones.forEach(d => {
+                                const dx = cx + Math.cos(d.angle) * d.distance;
+                                const dy = cy + Math.sin(d.angle) * d.distance;
+                                // Collision simple (distance)
+                                const dist = Math.hypot(bullet.x - dx, bullet.y - dy);
+                                if (dist < d.size + 5) { // 5 de marge
+                                    droneHit = true;
+                                    createExplosion(dx, dy, '#ffffff'); // Étincelle sur le bouclier
+                                }
+                            });
+
+                            if (droneHit) {
+                                bullet.markedForDeletion = true;
+                                return; // Le drone bloque le tir
+                            }
+
+                            let hit = false;
+
+                            // 1. Vérifier les parties destructibles
+                            boss.parts.forEach((part, index) => {
+                                if (part.active) {
+                                    // Coordonnées absolues de la partie
+                                    const pRect = {
+                                        x: boss.x + part.relX,
+                                        y: boss.y + part.relY,
+                                        width: part.width,
+                                        height: part.height
+                                    };
+                                    if (checkCollision(bullet, pRect)) {
+                                        bullet.markedForDeletion = true;
+                                        hit = true;
+                                        if (boss.damagePart(index, 5)) {
+                                            createExplosion(pRect.x + 10, pRect.y + 10, '#ffffff'); // Explosion blanche pour partie détruite
+                                        } else {
+                                            createExplosion(bullet.x, bullet.y, part.color);
+                                        }
+                                    }
+                                }
+                            });
+
+                            if (hit) return; // Si touche une partie, ne touche pas le corps principal
+
+                            // 2. Vérifier le corps principal
+                            if (checkCollision(bullet, boss)) {
+                                bullet.markedForDeletion = true;
+                                boss.hp -= 1; // Dégâts standards
+                                createExplosion(bullet.x, bullet.y, boss.color);
+
+                                if (boss.hp <= 0) {
+                                    // Boss vaincu
+                                    const bossX = boss.x;
+                                    const bossY = boss.y;
+                                    createExplosion(boss.x + boss.width/2, boss.y + boss.height/2, boss.color);
+                                    score += 500;
+                                    boss = null;
+
+                                    // Drop bonus garanti du Boss (au centre du boss mort)
+                                    powerUps.push(new PowerUp(bossX + 50, bossY + 40, 'DOUBLE'));
+
+                                    // Niveau suivant
+                                    level++;
+                                    enemySpeed += 0.5;
+                                    updateUI();
+
+                                    // Préparer la prochaine vague
+                                    waveLoading = true;
+                                    setTimeout(createEnemies, 2000);
+                                }
+                            }
+                        }
+                    });
+
+                    // Collision Boss -> Joueur
+                    if (boss && checkCollision(boss, player)) {
+                        lives = 0;
+                        updateUI();
+                        gameOver();
+                    }
+                }
+
+                // Gagner vague normale : plus d'ennemis ET pas de boss ET pas en attente de vague
+                if (enemies.length === 0 && !boss && !waveLoading && gameRunning) {
+                    // Spawn Boss au lieu de la prochaine vague
+                    spawnBoss();
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Lancement
+        init();
+
+    </script>
+</body>
+</html>
