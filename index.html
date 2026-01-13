@@ -323,6 +323,30 @@
                 // Gestion des parties destructibles (Canons)
                 this.parts = [];
                 this.initParts();
+
+                // --- NOUVELLES FONCTIONNALITÉS BOSS ---
+                // 1. Drones Boucliers
+                this.drones = [];
+                this.initDrones();
+
+                // 2. Mega Laser
+                this.laserState = 'NORMAL'; // NORMAL, CHARGING, FIRING
+                this.laserTimer = 0;
+                this.chargeDuration = 120; // 2 secondes de charge (à 60fps)
+                this.fireDuration = 60;   // 1 seconde de tir
+            }
+
+            initDrones() {
+                // 3 Drones orbitaux
+                for(let i=0; i<3; i++) {
+                    this.drones.push({
+                        angle: (Math.PI * 2 / 3) * i,
+                        distance: 90,
+                        size: 15,
+                        color: '#ffffff',
+                        rotationSpeed: 0.03
+                    });
+                }
             }
 
             initParts() {
@@ -380,27 +404,69 @@
                     return;
                 }
 
-                // Mouvement
-                let moveX = 0;
-                if (this.type === 0) { // Tank
-                    moveX = Math.sin(frameCount * 0.02) * 2;
-                } else if (this.type === 1) { // Speeder
-                    moveX = Math.cos(frameCount * 0.05) * 5;
-                } else { // Spinner
-                    moveX = Math.cos(frameCount * 0.03) * 4;
-                    this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
-                }
+                // --- Mise à jour des Drones ---
+                this.drones.forEach(d => d.angle += d.rotationSpeed);
 
-                this.x += moveX;
 
-                // Garder dans l'écran
-                if (this.x < 0) this.x = 0;
-                if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+                // --- Machine à états du Laser ---
+                if (this.laserState === 'NORMAL') {
+                    // Comportement normal (Mouvement + Tir)
 
-                // Tirs Spéciaux
-                let fireInterval = 60 - Math.min(this.level * 2, 40);
-                if (frameCount % Math.floor(fireInterval) === 0) {
-                    this.shoot();
+                    // Mouvement
+                    let moveX = 0;
+                    if (this.type === 0) { // Tank
+                        moveX = Math.sin(frameCount * 0.02) * 2;
+                    } else if (this.type === 1) { // Speeder
+                        moveX = Math.cos(frameCount * 0.05) * 5;
+                    } else { // Spinner
+                        moveX = Math.cos(frameCount * 0.03) * 4;
+                        this.y = this.targetY + Math.sin(frameCount * 0.05) * 20;
+                    }
+                    this.x += moveX;
+
+                    // Garder dans l'écran
+                    if (this.x < 0) this.x = 0;
+                    if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+
+                    // Tirs Spéciaux
+                    let fireInterval = 60 - Math.min(this.level * 2, 40);
+                    if (frameCount % Math.floor(fireInterval) === 0) {
+                        this.shoot();
+                    }
+
+                    // Chance de déclencher le Laser (1% par frame)
+                    if (Math.random() < 0.005) {
+                        this.laserState = 'CHARGING';
+                        this.laserTimer = this.chargeDuration;
+                    }
+
+                } else if (this.laserState === 'CHARGING') {
+                    // Le boss s'arrête et charge
+                    this.laserTimer--;
+                    if (this.laserTimer <= 0) {
+                        this.laserState = 'FIRING';
+                        this.laserTimer = this.fireDuration;
+                        // Son de tir ?
+                    }
+
+                } else if (this.laserState === 'FIRING') {
+                    // Tir du rayon
+                    // Collision Rayon -> Joueur
+                    const beamX = this.x + this.width/2 - 25;
+                    const beamW = 50;
+                    // hitbox simple rect vs rect (le rayon fait toute la hauteur)
+                    if (player.x < beamX + beamW && player.x + player.width > beamX) {
+                        // Le joueur est touché !
+                        lives--;
+                        updateUI();
+                        createExplosion(player.x + player.width/2, player.y, COLORS.PLAYER);
+                        if (lives <= 0) gameOver();
+                    }
+
+                    this.laserTimer--;
+                    if (this.laserTimer <= 0) {
+                        this.laserState = 'NORMAL';
+                    }
                 }
             }
 
@@ -472,7 +538,32 @@
             }
 
             draw() {
-                // Dessiner les parties destructibles
+                // 1. Dessiner le MEGA LASER (derrière le boss)
+                if (this.laserState === 'CHARGING') {
+                    // Pré-visualisation : Ligne fine vibrante
+                    ctx.save();
+                    const alpha = 0.5 + Math.random() * 0.5;
+                    ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    ctx.shadowColor = 'red';
+                    ctx.shadowBlur = 20;
+                    const beamX = this.x + this.width/2 - 2;
+                    ctx.fillRect(beamX, this.y + this.height - 20, 4, canvas.height);
+                    ctx.restore();
+                } else if (this.laserState === 'FIRING') {
+                    // TIR : Gros rayon
+                    const beamX = this.x + this.width/2;
+                    // Rayon externe
+                    drawNeonRect(beamX - 25, this.y + this.height - 20, 50, canvas.height, '#00ffff', 30);
+                    // Cœur blanc
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#ffffff';
+                    ctx.fillRect(beamX - 10, this.y + this.height - 20, 20, canvas.height);
+                    ctx.shadowBlur = 0;
+                }
+
+
+                // 2. Dessiner les parties destructibles
                 this.parts.forEach(part => {
                     if (part.active) {
                         drawNeonRect(this.x + part.relX, this.y + part.relY, part.width, part.height, part.color, 10);
@@ -550,6 +641,22 @@
                 ctx.fill();
 
                 ctx.restore();
+
+                // 3. Dessiner les Drones
+                const cx = this.x + this.width / 2;
+                const cy = this.y + this.height / 2;
+                this.drones.forEach(d => {
+                    const dx = cx + Math.cos(d.angle) * d.distance;
+                    const dy = cy + Math.sin(d.angle) * d.distance;
+                    drawNeonRect(dx - d.size/2, dy - d.size/2, d.size, d.size, d.color, 15);
+                    // Ligne de lien énergétique (optionnel, fun)
+                    ctx.beginPath();
+                    ctx.strokeStyle = `rgba(255, 255, 255, 0.2)`;
+                    ctx.lineWidth = 1;
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(dx, dy);
+                    ctx.stroke();
+                });
 
                 // Barre de vie du Boss
                 this.drawHealthBar();
@@ -897,6 +1004,28 @@
                     // Collision Projectile Joueur -> Boss
                     bullets.forEach(bullet => {
                         if (bullet.isPlayerBullet && !bullet.markedForDeletion && boss) {
+
+                            // 0. Vérifier les Drones Boucliers
+                            let droneHit = false;
+                            const cx = boss.x + boss.width / 2;
+                            const cy = boss.y + boss.height / 2;
+
+                            boss.drones.forEach(d => {
+                                const dx = cx + Math.cos(d.angle) * d.distance;
+                                const dy = cy + Math.sin(d.angle) * d.distance;
+                                // Collision simple (distance)
+                                const dist = Math.hypot(bullet.x - dx, bullet.y - dy);
+                                if (dist < d.size + 5) { // 5 de marge
+                                    droneHit = true;
+                                    createExplosion(dx, dy, '#ffffff'); // Étincelle sur le bouclier
+                                }
+                            });
+
+                            if (droneHit) {
+                                bullet.markedForDeletion = true;
+                                return; // Le drone bloque le tir
+                            }
+
                             let hit = false;
 
                             // 1. Vérifier les parties destructibles
